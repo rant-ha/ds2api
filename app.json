@@ -1,0 +1,11 @@
+{
+  "name": "ds2api",
+  "description": "DS2API App",
+  "stack": "container",
+  "env": {
+    "DS2API_ADMIN_KEY": {
+      "description": "设置你的高强度管理后台登录密码",
+      "required": true
+    }
+  }
+}
