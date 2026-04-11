@@ -26,16 +26,13 @@ func TestParseDeepSeekContentLineContentFilter(t *testing.T) {
 	}
 }
 
-func TestParseDeepSeekContentLineContentFilterCodeIncludesOutputTokens(t *testing.T) {
+func TestParseDeepSeekContentLineContentFilterCodeStops(t *testing.T) {
 	res := ParseDeepSeekContentLine(
 		[]byte(`data: {"code":"content_filter","accumulated_token_usage":99}`),
 		false, "text",
 	)
 	if !res.Parsed || !res.Stop || !res.ContentFilter {
 		t.Fatalf("expected content-filter stop result: %#v", res)
-	}
-	if res.OutputTokens != 99 {
-		t.Fatalf("expected output token usage 99, got %d", res.OutputTokens)
 	}
 }
 
@@ -46,10 +43,24 @@ func TestParseDeepSeekContentLineContentFilterStatus(t *testing.T) {
 	}
 }
 
-func TestParseDeepSeekContentLineCapturesAccumulatedTokenUsage(t *testing.T) {
+func TestParseDeepSeekContentLineIgnoresAccumulatedTokenUsage(t *testing.T) {
 	res := ParseDeepSeekContentLine([]byte(`data: {"p":"response","o":"BATCH","v":[{"p":"accumulated_token_usage","v":1383},{"p":"quasi_status","v":"FINISHED"}]}`), false, "text")
-	if res.OutputTokens != 1383 {
-		t.Fatalf("expected output token usage 1383, got %d", res.OutputTokens)
+	if !res.Parsed {
+		t.Fatalf("expected parsed result")
+	}
+}
+
+func TestParseDeepSeekContentLineIgnoresAccumulatedTokenUsageString(t *testing.T) {
+	res := ParseDeepSeekContentLine([]byte(`data: {"p":"response","o":"BATCH","v":[{"p":"accumulated_token_usage","v":"190"},{"p":"quasi_status","v":"FINISHED"}]}`), false, "text")
+	if !res.Parsed {
+		t.Fatalf("expected parsed result")
+	}
+}
+
+func TestParseDeepSeekContentLineErrorStops(t *testing.T) {
+	res := ParseDeepSeekContentLine([]byte(`data: {"error":"boom","accumulated_token_usage":123}`), false, "text")
+	if !res.Parsed || !res.Stop {
+		t.Fatalf("expected stop on error: %#v", res)
 	}
 }
 
@@ -60,6 +71,26 @@ func TestParseDeepSeekContentLineContent(t *testing.T) {
 	}
 	if len(res.Parts) != 1 || res.Parts[0].Text != "hi" || res.Parts[0].Type != "text" {
 		t.Fatalf("unexpected parts: %#v", res.Parts)
+	}
+}
+
+func TestParseDeepSeekContentLineFiltersIncompleteStatusText(t *testing.T) {
+	res := ParseDeepSeekContentLine([]byte(`data: {"p":"response/status","v":"INCOMPLETE"}`), false, "text")
+	if !res.Parsed || res.Stop {
+		t.Fatalf("expected parsed non-stop result: %#v", res)
+	}
+	if len(res.Parts) != 0 {
+		t.Fatalf("expected INCOMPLETE status to be filtered, got %#v", res.Parts)
+	}
+}
+
+func TestParseDeepSeekContentLinePreservesSpaceOnlyChunk(t *testing.T) {
+	res := ParseDeepSeekContentLine([]byte(`data: {"v":" "}`), false, "text")
+	if !res.Parsed || res.Stop {
+		t.Fatalf("expected parsed non-stop result: %#v", res)
+	}
+	if len(res.Parts) != 1 || res.Parts[0].Text != " " || res.Parts[0].Type != "text" {
+		t.Fatalf("unexpected parts for space-only chunk: %#v", res.Parts)
 	}
 }
 
@@ -100,5 +131,25 @@ func TestParseDeepSeekContentLineContentTextEqualContentFilterDoesNotStop(t *tes
 	}
 	if res.Stop || res.ContentFilter {
 		t.Fatalf("did not expect content-filter stop for content text: %#v", res)
+	}
+}
+
+func TestParseDeepSeekContentLinePreservesTrailingNewlineBeforeLeakedContentFilter(t *testing.T) {
+	res := ParseDeepSeekContentLine([]byte("data: {\"p\":\"response/content\",\"v\":\"line1\\nCONTENT_FILTERblocked\"}"), false, "text")
+	if !res.Parsed || res.Stop {
+		t.Fatalf("expected parsed non-stop result: %#v", res)
+	}
+	if len(res.Parts) != 1 || res.Parts[0].Text != "line1\n" {
+		t.Fatalf("expected trailing newline preserved, got %#v", res.Parts)
+	}
+}
+
+func TestParseDeepSeekContentLineKeepsNewlineOnlyChunkBeforeLeakedContentFilter(t *testing.T) {
+	res := ParseDeepSeekContentLine([]byte("data: {\"p\":\"response/content\",\"v\":\"\\nCONTENT_FILTERblocked\"}"), false, "text")
+	if !res.Parsed || res.Stop {
+		t.Fatalf("expected parsed non-stop result: %#v", res)
+	}
+	if len(res.Parts) != 1 || res.Parts[0].Text != "\n" {
+		t.Fatalf("expected newline-only chunk preserved, got %#v", res.Parts)
 	}
 }

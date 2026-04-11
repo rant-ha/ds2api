@@ -3,7 +3,6 @@ package sse
 import (
 	"bytes"
 	"encoding/json"
-	"math"
 	"strings"
 
 	"ds2api/internal/deepseek"
@@ -56,9 +55,7 @@ func isFragmentStatusPath(path string) bool {
 	if mid == "" {
 		return false
 	}
-	if strings.HasPrefix(mid, "-") {
-		mid = mid[1:]
-	}
+	mid = strings.TrimPrefix(mid, "-")
 	if mid == "" {
 		return false
 	}
@@ -79,9 +76,12 @@ func ParseSSEChunkForContent(chunk map[string]any, thinkingEnabled bool, current
 	if shouldSkipPath(path) {
 		return nil, false, currentFragmentType
 	}
-	if path == "response/status" {
-		if s, ok := v.(string); ok && s == "FINISHED" {
-			return nil, true, currentFragmentType
+	if isStatusPath(path) {
+		if s, ok := v.(string); ok {
+			if strings.EqualFold(strings.TrimSpace(s), "FINISHED") {
+				return nil, true, currentFragmentType
+			}
+			return nil, false, currentFragmentType
 		}
 	}
 	newType := currentFragmentType
@@ -184,6 +184,9 @@ func appendChunkValueContent(v any, partType string, newType *string, parts *[]C
 		if val == "FINISHED" && (path == "" || path == "status") {
 			return true
 		}
+		if isStatusPath(path) {
+			return false
+		}
 		appendContentPart(parts, val, partType)
 	case []any:
 		pp, finished := extractContentRecursive(val, partType)
@@ -241,6 +244,10 @@ func appendContentPart(parts *[]ContentPart, content, kind string) {
 	*parts = append(*parts, ContentPart{Text: content, Type: kind})
 }
 
+func isStatusPath(path string) bool {
+	return path == "response/status" || path == "status"
+}
+
 func extractContentRecursive(items []any, defaultType string) ([]ContentPart, bool) {
 	parts := make([]ContentPart, 0, len(items))
 	for _, it := range items {
@@ -253,10 +260,11 @@ func extractContentRecursive(items []any, defaultType string) ([]ContentPart, bo
 		if !hasV {
 			continue
 		}
-		if itemPath == "status" {
-			if s, ok := itemV.(string); ok && s == "FINISHED" {
+		if isStatusPath(itemPath) {
+			if s, ok := itemV.(string); ok && strings.EqualFold(strings.TrimSpace(s), "FINISHED") {
 				return nil, true
 			}
+			continue
 		}
 		if shouldSkipPath(itemPath) {
 			continue
@@ -282,6 +290,9 @@ func extractContentRecursive(items []any, defaultType string) ([]ContentPart, bo
 		}
 		switch v := itemV.(type) {
 		case string:
+			if isStatusPath(itemPath) {
+				continue
+			}
 			if v != "" && v != "FINISHED" {
 				parts = append(parts, ContentPart{Text: v, Type: partType})
 			}
@@ -295,11 +306,12 @@ func extractContentRecursive(items []any, defaultType string) ([]ContentPart, bo
 					}
 					typeName, _ := x["type"].(string)
 					typeName = strings.ToUpper(typeName)
-					if typeName == "THINK" || typeName == "THINKING" {
+					switch typeName {
+					case "THINK", "THINKING":
 						parts = append(parts, ContentPart{Text: ct, Type: "thinking"})
-					} else if typeName == "RESPONSE" {
+					case "RESPONSE":
 						parts = append(parts, ContentPart{Text: ct, Type: "text"})
-					} else {
+					default:
 						parts = append(parts, ContentPart{Text: ct, Type: partType})
 					}
 				case string:
@@ -348,58 +360,4 @@ func hasContentFilterStatusValue(v any) bool {
 		}
 	}
 	return false
-}
-
-func extractAccumulatedTokenUsage(chunk map[string]any) int {
-	return findAccumulatedTokenUsage(chunk)
-}
-
-func findAccumulatedTokenUsage(v any) int {
-	switch x := v.(type) {
-	case map[string]any:
-		if p, _ := x["p"].(string); strings.Contains(strings.ToLower(p), "accumulated_token_usage") {
-			if n, ok := toInt(x["v"]); ok && n > 0 {
-				return n
-			}
-		}
-		if n, ok := toInt(x["accumulated_token_usage"]); ok && n > 0 {
-			return n
-		}
-		for _, vv := range x {
-			if n := findAccumulatedTokenUsage(vv); n > 0 {
-				return n
-			}
-		}
-	case []any:
-		for _, item := range x {
-			if n := findAccumulatedTokenUsage(item); n > 0 {
-				return n
-			}
-		}
-	}
-	return 0
-}
-
-func toInt(v any) (int, bool) {
-	switch x := v.(type) {
-	case int:
-		return x, true
-	case int32:
-		return int(x), true
-	case int64:
-		return int(x), true
-	case float64:
-		if math.IsNaN(x) || math.IsInf(x, 0) {
-			return 0, false
-		}
-		return int(x), true
-	case json.Number:
-		i, err := x.Int64()
-		if err != nil {
-			return 0, false
-		}
-		return int(i), true
-	default:
-		return 0, false
-	}
 }

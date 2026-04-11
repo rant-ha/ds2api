@@ -17,7 +17,8 @@ import (
 
 type testGeminiConfig struct{}
 
-func (testGeminiConfig) ModelAliases() map[string]string { return nil }
+func (testGeminiConfig) ModelAliases() map[string]string   { return nil }
+func (testGeminiConfig) CompatStripReferenceMarkers() bool { return true }
 
 type testGeminiAuth struct {
 	a   *auth.RequestAuth
@@ -41,19 +42,23 @@ func (m testGeminiAuth) Determine(_ *http.Request) (*auth.RequestAuth, error) {
 
 func (testGeminiAuth) Release(_ *auth.RequestAuth) {}
 
+//nolint:unused // reserved test double for native Gemini DS-call path coverage.
 type testGeminiDS struct {
 	resp *http.Response
 	err  error
 }
 
+//nolint:unused // reserved test double for native Gemini DS-call path coverage.
 func (m testGeminiDS) CreateSession(_ context.Context, _ *auth.RequestAuth, _ int) (string, error) {
 	return "session-id", nil
 }
 
+//nolint:unused // reserved test double for native Gemini DS-call path coverage.
 func (m testGeminiDS) GetPow(_ context.Context, _ *auth.RequestAuth, _ int) (string, error) {
 	return "pow", nil
 }
 
+//nolint:unused // reserved test double for native Gemini DS-call path coverage.
 func (m testGeminiDS) CallCompletion(_ context.Context, _ *auth.RequestAuth, _ map[string]any, _ string, _ int) (*http.Response, error) {
 	if m.err != nil {
 		return nil, m.err
@@ -62,8 +67,8 @@ func (m testGeminiDS) CallCompletion(_ context.Context, _ *auth.RequestAuth, _ m
 }
 
 type geminiOpenAIErrorStub struct {
-	status int
-	body   string
+	status  int
+	body    string
 	headers map[string]string
 }
 
@@ -99,6 +104,7 @@ func (s geminiOpenAISuccessStub) ChatCompletions(w http.ResponseWriter, _ *http.
 	_, _ = w.Write([]byte(out))
 }
 
+//nolint:unused // helper retained for native Gemini stream fixture tests.
 func makeGeminiUpstreamResponse(lines ...string) *http.Response {
 	body := strings.Join(lines, "\n")
 	if !strings.HasSuffix(body, "\n") {
@@ -247,7 +253,7 @@ func TestStreamGenerateContentEmitsSSE(t *testing.T) {
 
 func TestGenerateContentOpenAIProxyErrorUsesGeminiEnvelope(t *testing.T) {
 	h := &Handler{
-		Store:  testGeminiConfig{},
+		Store: testGeminiConfig{},
 		OpenAI: geminiOpenAIErrorStub{
 			status: http.StatusUnauthorized,
 			body:   `{"error":{"message":"invalid api key"}}`,

@@ -32,6 +32,47 @@ func TestLoadStoreClearsTokensFromConfigInput(t *testing.T) {
 	}
 }
 
+func TestLoadStorePreservesProxiesAndAccountProxyAssignment(t *testing.T) {
+	t.Setenv("DS2API_CONFIG_JSON", `{
+		"proxies":[
+			{
+				"id":"proxy-sh-1",
+				"name":"Shanghai Exit",
+				"type":"socks5h",
+				"host":"127.0.0.1",
+				"port":1080,
+				"username":"demo",
+				"password":"secret"
+			}
+		],
+		"accounts":[
+			{
+				"email":"u@example.com",
+				"password":"p",
+				"proxy_id":"proxy-sh-1"
+			}
+		]
+	}`)
+
+	store := LoadStore()
+	snap := store.Snapshot()
+	if len(snap.Proxies) != 1 {
+		t.Fatalf("expected 1 proxy, got %d", len(snap.Proxies))
+	}
+	if snap.Proxies[0].ID != "proxy-sh-1" {
+		t.Fatalf("unexpected proxy id: %#v", snap.Proxies[0])
+	}
+	if snap.Proxies[0].Type != "socks5h" {
+		t.Fatalf("unexpected proxy type: %#v", snap.Proxies[0])
+	}
+	if len(snap.Accounts) != 1 {
+		t.Fatalf("expected 1 account, got %d", len(snap.Accounts))
+	}
+	if snap.Accounts[0].ProxyID != "proxy-sh-1" {
+		t.Fatalf("expected account proxy assignment preserved, got %#v", snap.Accounts[0])
+	}
+}
+
 func TestLoadStoreDropsLegacyTokenOnlyAccounts(t *testing.T) {
 	t.Setenv("DS2API_CONFIG_JSON", `{
 		"accounts":[
@@ -58,8 +99,7 @@ func TestLoadStorePreservesFileBackedTokensForRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create temp config: %v", err)
 	}
-	defer tmp.Close()
-
+	defer func() { _ = tmp.Close() }()
 	if _, err := tmp.WriteString(`{
 		"accounts":[{"email":"u@example.com","password":"p","token":"persisted-token"}]
 	}`); err != nil {
@@ -67,7 +107,6 @@ func TestLoadStorePreservesFileBackedTokensForRuntime(t *testing.T) {
 	}
 
 	t.Setenv("DS2API_CONFIG_JSON", "")
-	t.Setenv("CONFIG_JSON", "")
 	t.Setenv("DS2API_CONFIG_PATH", tmp.Name())
 
 	store := LoadStore()
@@ -77,6 +116,31 @@ func TestLoadStorePreservesFileBackedTokensForRuntime(t *testing.T) {
 	}
 	if accounts[0].Token != "persisted-token" {
 		t.Fatalf("expected file-backed token preserved for runtime use, got %q", accounts[0].Token)
+	}
+}
+
+func TestLoadStoreIgnoresLegacyConfigJSONEnv(t *testing.T) {
+	tmp, err := os.CreateTemp(t.TempDir(), "config-*.json")
+	if err != nil {
+		t.Fatalf("create temp config: %v", err)
+	}
+	path := tmp.Name()
+	_ = tmp.Close()
+	_ = os.Remove(path)
+
+	t.Setenv("DS2API_CONFIG_JSON", "")
+	t.Setenv("CONFIG_JSON", `{"keys":["legacy-key"],"accounts":[{"email":"legacy@example.com","password":"p"}]}`)
+	t.Setenv("DS2API_CONFIG_PATH", path)
+
+	store := LoadStore()
+	if store.HasEnvConfigSource() {
+		t.Fatal("expected legacy CONFIG_JSON to be ignored")
+	}
+	if store.IsEnvBacked() {
+		t.Fatal("expected store to remain file-backed/empty when only CONFIG_JSON is set")
+	}
+	if len(store.Keys()) != 0 || len(store.Accounts()) != 0 {
+		t.Fatalf("expected ignored legacy env to leave store empty, got keys=%d accounts=%d", len(store.Keys()), len(store.Accounts()))
 	}
 }
 
@@ -90,7 +154,6 @@ func TestEnvBackedStoreWritebackBootstrapsMissingConfigFile(t *testing.T) {
 	_ = os.Remove(path)
 
 	t.Setenv("DS2API_CONFIG_JSON", `{"keys":["k1"],"accounts":[{"email":"seed@example.com","password":"p"}]}`)
-	t.Setenv("CONFIG_JSON", "")
 	t.Setenv("DS2API_CONFIG_PATH", path)
 	t.Setenv("DS2API_ENV_WRITEBACK", "1")
 
@@ -135,7 +198,6 @@ func TestEnvBackedStoreWritebackDoesNotBootstrapOnInvalidEnvJSON(t *testing.T) {
 	_ = os.Remove(path)
 
 	t.Setenv("DS2API_CONFIG_JSON", "{invalid-json")
-	t.Setenv("CONFIG_JSON", "")
 	t.Setenv("DS2API_CONFIG_PATH", path)
 	t.Setenv("DS2API_ENV_WRITEBACK", "1")
 
@@ -154,6 +216,56 @@ func TestEnvBackedStoreWritebackDoesNotBootstrapOnInvalidEnvJSON(t *testing.T) {
 	}
 }
 
+func TestEnvBackedStoreWritebackDoesNotBootstrapOnInvalidSemanticConfig(t *testing.T) {
+	tmp, err := os.CreateTemp(t.TempDir(), "config-*.json")
+	if err != nil {
+		t.Fatalf("create temp config: %v", err)
+	}
+	path := tmp.Name()
+	_ = tmp.Close()
+	_ = os.Remove(path)
+
+	t.Setenv("DS2API_CONFIG_JSON", `{
+		"keys":["k1"],
+		"accounts":[{"email":"seed@example.com","password":"p"}],
+		"runtime":{"account_max_inflight":300}
+	}`)
+	t.Setenv("DS2API_CONFIG_PATH", path)
+	t.Setenv("DS2API_ENV_WRITEBACK", "1")
+
+	cfg, fromEnv, loadErr := loadConfig()
+	if loadErr == nil {
+		t.Fatalf("expected loadConfig error for invalid runtime config")
+	}
+	if !fromEnv {
+		t.Fatalf("expected fromEnv=true when env config is the source")
+	}
+	if !strings.Contains(loadErr.Error(), "runtime.account_max_inflight") {
+		t.Fatalf("expected runtime validation error, got %v", loadErr)
+	}
+	if len(cfg.Keys) != 1 || len(cfg.Accounts) != 1 {
+		t.Fatalf("expected env config to be parsed before validation, got keys=%d accounts=%d", len(cfg.Keys), len(cfg.Accounts))
+	}
+	if _, statErr := os.Stat(path); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("expected invalid config not to be bootstrapped, stat err=%v", statErr)
+	}
+}
+
+func TestLoadStoreWithErrorRejectsInvalidRuntimeConfig(t *testing.T) {
+	t.Setenv("DS2API_CONFIG_JSON", `{
+		"keys":["k1"],
+		"accounts":[{"email":"u@example.com","password":"p"}],
+		"runtime":{"account_max_inflight":300}
+	}`)
+	t.Setenv("DS2API_ENV_WRITEBACK", "0")
+
+	if _, err := LoadStoreWithError(); err == nil {
+		t.Fatal("expected LoadStoreWithError to reject invalid runtime config")
+	} else if !strings.Contains(err.Error(), "runtime.account_max_inflight") {
+		t.Fatalf("expected runtime validation error, got %v", err)
+	}
+}
+
 func TestEnvBackedStoreWritebackFallsBackToPersistedFileOnInvalidEnvJSON(t *testing.T) {
 	tmp, err := os.CreateTemp(t.TempDir(), "config-*.json")
 	if err != nil {
@@ -166,7 +278,6 @@ func TestEnvBackedStoreWritebackFallsBackToPersistedFileOnInvalidEnvJSON(t *test
 	_ = tmp.Close()
 
 	t.Setenv("DS2API_CONFIG_JSON", "{invalid-json")
-	t.Setenv("CONFIG_JSON", "")
 	t.Setenv("DS2API_CONFIG_PATH", path)
 	t.Setenv("DS2API_ENV_WRITEBACK", "1")
 
@@ -265,7 +376,6 @@ func TestParseConfigStringSupportsRawURLBase64(t *testing.T) {
 func TestLoadConfigOnVercelWithoutConfigFileFallsBackToMemory(t *testing.T) {
 	t.Setenv("VERCEL", "1")
 	t.Setenv("DS2API_CONFIG_JSON", "")
-	t.Setenv("CONFIG_JSON", "")
 	t.Setenv("DS2API_CONFIG_PATH", "testdata/does-not-exist.json")
 
 	cfg, fromEnv, err := loadConfig()
@@ -285,7 +395,7 @@ func TestAccountTestStatusIsRuntimeOnlyAndNotPersisted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create temp config: %v", err)
 	}
-	defer tmp.Close()
+	defer func() { _ = tmp.Close() }()
 	if _, err := tmp.WriteString(`{
 		"accounts":[{"email":"u@example.com","password":"p","test_status":"ok"}]
 	}`); err != nil {
@@ -293,7 +403,6 @@ func TestAccountTestStatusIsRuntimeOnlyAndNotPersisted(t *testing.T) {
 	}
 
 	t.Setenv("DS2API_CONFIG_JSON", "")
-	t.Setenv("CONFIG_JSON", "")
 	t.Setenv("DS2API_CONFIG_PATH", tmp.Name())
 
 	store := LoadStore()

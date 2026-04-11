@@ -20,6 +20,9 @@ func (c Config) MarshalJSON() ([]byte, error) {
 	if len(c.Accounts) > 0 {
 		m["accounts"] = c.Accounts
 	}
+	if len(c.Proxies) > 0 {
+		m["proxies"] = c.Proxies
+	}
 	if len(c.ClaudeMapping) > 0 {
 		m["claude_mapping"] = c.ClaudeMapping
 	}
@@ -35,7 +38,7 @@ func (c Config) MarshalJSON() ([]byte, error) {
 	if c.Runtime.AccountMaxInflight > 0 || c.Runtime.AccountMaxQueue > 0 || c.Runtime.GlobalMaxInflight > 0 || c.Runtime.TokenRefreshIntervalHours > 0 {
 		m["runtime"] = c.Runtime
 	}
-	if c.Compat.WideInputStrictOutput != nil {
+	if c.Compat.WideInputStrictOutput != nil || c.Compat.StripReferenceMarkers != nil {
 		m["compat"] = c.Compat
 	}
 	if c.Responses.StoreTTLSeconds > 0 {
@@ -68,6 +71,10 @@ func (c *Config) UnmarshalJSON(b []byte) error {
 			}
 		case "accounts":
 			if err := json.Unmarshal(v, &c.Accounts); err != nil {
+				return fmt.Errorf("invalid field %q: %w", k, err)
+			}
+		case "proxies":
+			if err := json.Unmarshal(v, &c.Proxies); err != nil {
 				return fmt.Errorf("invalid field %q: %w", k, err)
 			}
 		case "claude_mapping":
@@ -130,6 +137,7 @@ func (c Config) Clone() Config {
 	clone := Config{
 		Keys:           slices.Clone(c.Keys),
 		Accounts:       slices.Clone(c.Accounts),
+		Proxies:        slices.Clone(c.Proxies),
 		ClaudeMapping:  cloneStringMap(c.ClaudeMapping),
 		ClaudeModelMap: cloneStringMap(c.ClaudeModelMap),
 		ModelAliases:   cloneStringMap(c.ModelAliases),
@@ -137,6 +145,7 @@ func (c Config) Clone() Config {
 		Runtime:        c.Runtime,
 		Compat: CompatConfig{
 			WideInputStrictOutput: cloneBoolPtr(c.Compat.WideInputStrictOutput),
+			StripReferenceMarkers: cloneBoolPtr(c.Compat.StripReferenceMarkers),
 		},
 		Responses:        c.Responses,
 		Embeddings:       c.Embeddings,

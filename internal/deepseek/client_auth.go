@@ -13,6 +13,7 @@ import (
 )
 
 func (c *Client) Login(ctx context.Context, acc config.Account) (string, error) {
+	clients := c.requestClientsForAccount(acc)
 	payload := map[string]any{
 		"password":  strings.TrimSpace(acc.Password),
 		"device_id": "deepseek_to_api",
@@ -27,7 +28,7 @@ func (c *Client) Login(ctx context.Context, acc config.Account) (string, error) 
 	} else {
 		return "", errors.New("missing email/mobile")
 	}
-	resp, err := c.postJSON(ctx, c.regular, DeepSeekLoginURL, BaseHeaders, payload)
+	resp, err := c.postJSON(ctx, clients.regular, clients.fallback, DeepSeekLoginURL, BaseHeaders, payload)
 	if err != nil {
 		return "", err
 	}
@@ -52,11 +53,12 @@ func (c *Client) CreateSession(ctx context.Context, a *auth.RequestAuth, maxAtte
 	if maxAttempts <= 0 {
 		maxAttempts = c.maxRetries
 	}
+	clients := c.requestClientsForAuth(ctx, a)
 	attempts := 0
 	refreshed := false
 	for attempts < maxAttempts {
 		headers := c.authHeaders(a.DeepSeekToken)
-		resp, status, err := c.postJSONWithStatus(ctx, c.regular, DeepSeekCreateSessionURL, headers, map[string]any{"agent": "chat"})
+		resp, status, err := c.postJSONWithStatus(ctx, clients.regular, clients.fallback, DeepSeekCreateSessionURL, headers, map[string]any{"agent": "chat"})
 		if err != nil {
 			config.Logger.Warn("[create_session] request error", "error", err, "account", a.AccountID)
 			attempts++
@@ -64,9 +66,7 @@ func (c *Client) CreateSession(ctx context.Context, a *auth.RequestAuth, maxAtte
 		}
 		code, bizCode, msg, bizMsg := extractResponseStatus(resp)
 		if status == http.StatusOK && code == 0 && bizCode == 0 {
-			data, _ := resp["data"].(map[string]any)
-			bizData, _ := data["biz_data"].(map[string]any)
-			sessionID, _ := bizData["id"].(string)
+			sessionID := extractCreateSessionID(resp)
 			if sessionID != "" {
 				return sessionID, nil
 			}
@@ -94,11 +94,12 @@ func (c *Client) GetPow(ctx context.Context, a *auth.RequestAuth, maxAttempts in
 	if maxAttempts <= 0 {
 		maxAttempts = c.maxRetries
 	}
+	clients := c.requestClientsForAuth(ctx, a)
 	attempts := 0
 	refreshed := false
 	for attempts < maxAttempts {
 		headers := c.authHeaders(a.DeepSeekToken)
-		resp, status, err := c.postJSONWithStatus(ctx, c.regular, DeepSeekCreatePowURL, headers, map[string]any{"target_path": "/api/v0/chat/completion"})
+		resp, status, err := c.postJSONWithStatus(ctx, clients.regular, clients.fallback, DeepSeekCreatePowURL, headers, map[string]any{"target_path": "/api/v0/chat/completion"})
 		if err != nil {
 			config.Logger.Warn("[get_pow] request error", "error", err, "account", a.AccountID)
 			attempts++
@@ -109,7 +110,7 @@ func (c *Client) GetPow(ctx context.Context, a *auth.RequestAuth, maxAttempts in
 			data, _ := resp["data"].(map[string]any)
 			bizData, _ := data["biz_data"].(map[string]any)
 			challenge, _ := bizData["challenge"].(map[string]any)
-			answer, err := c.powSolver.Compute(ctx, challenge)
+			answer, err := ComputePow(ctx, challenge)
 			if err != nil {
 				attempts++
 				continue
@@ -199,6 +200,22 @@ func isAuthIndicativeBizFailure(msg string, bizMsg string) bool {
 		}
 	}
 	return false
+}
+
+// DeepSeek has returned create-session ids in both biz_data.id and
+// biz_data.chat_session.id across observed response variants; accept either.
+func extractCreateSessionID(resp map[string]any) string {
+	data, _ := resp["data"].(map[string]any)
+	bizData, _ := data["biz_data"].(map[string]any)
+	if sessionID, _ := bizData["id"].(string); strings.TrimSpace(sessionID) != "" {
+		return strings.TrimSpace(sessionID)
+	}
+	if chatSession, ok := bizData["chat_session"].(map[string]any); ok {
+		if sessionID, _ := chatSession["id"].(string); strings.TrimSpace(sessionID) != "" {
+			return strings.TrimSpace(sessionID)
+		}
+	}
+	return ""
 }
 
 func extractResponseStatus(resp map[string]any) (code int, bizCode int, msg string, bizMsg string) {

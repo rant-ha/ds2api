@@ -9,7 +9,7 @@
 ### 前置要求
 
 - Go 1.26+
-- Node.js 20+（WebUI 开发时）
+- Node.js `20.19+` 或 `22.12+`（WebUI 开发时）
 - npm（随 Node.js 提供）
 
 ### 后端开发
@@ -25,7 +25,8 @@ cp config.example.json config.json
 
 # 3. 启动后端
 go run ./cmd/ds2api
-# 默认监听 http://localhost:5001
+# 本地访问 http://127.0.0.1:5001
+# 实际绑定 0.0.0.0:5001，可通过局域网 IP 访问
 ```
 
 ### 前端开发（WebUI）
@@ -40,6 +41,7 @@ npm install
 # 3. 启动开发服务器（热更新）
 npm run dev
 # 默认监听 http://localhost:5173，自动代理 API 到后端
+# 当前未配置 host: 0.0.0.0，因此默认不对局域网开放
 ```
 
 WebUI 技术栈：
@@ -57,7 +59,7 @@ docker-compose -f docker-compose.dev.yml up
 
 | 语言 | 规范 |
 | --- | --- |
-| **Go** | 提交前运行 `gofmt`，确保 `go test ./...` 通过 |
+| **Go** | 提交前运行 `./scripts/lint.sh`（包含 gofmt+golangci-lint）并确保 `go test ./...` 通过 |
 | **JavaScript/React** | 保持现有代码风格（函数组件） |
 | **提交信息** | 使用语义化前缀：`feat:`、`fix:`、`docs:`、`refactor:`、`style:`、`perf:`、`chore:` |
 
@@ -92,58 +94,12 @@ docker-compose -f docker-compose.dev.yml up
 
 ## 项目结构
 
-```text
-ds2api/
-├── app/                     # 统一 HTTP Handler 装配（本地 + Serverless）
-├── cmd/
-│   ├── ds2api/              # 本地/容器启动入口
-│   └── ds2api-tests/        # 端到端测试集入口
-├── api/
-│   ├── index.go             # Vercel Serverless Go 入口
-│   ├── chat-stream.js       # Vercel Node.js 流式转发
-│   └── (rewrite targets in vercel.json)
-├── internal/
-│   ├── account/             # 账号池与并发队列
-│   ├── adapter/
-│   │   ├── openai/          # OpenAI 兼容适配器
-│   │   ├── claude/          # Claude 兼容适配器
-│   │   └── gemini/          # Gemini 兼容适配器
-│   ├── admin/               # Admin API handlers
-│   ├── auth/                # 鉴权与 JWT
-│   ├── claudeconv/          # Claude 消息格式转换
-│   ├── compat/              # Go 版本兼容与回归测试辅助
-│   ├── config/              # 配置加载、校验与热更新
-│   ├── deepseek/            # DeepSeek 客户端、PoW WASM
-│   ├── js/                  # Node 运行时流式/兼容逻辑
-│   ├── devcapture/          # 开发抓包
-│   ├── format/              # 输出格式化
-│   ├── prompt/              # Prompt 构建
-│   ├── server/              # HTTP 路由（chi router）
-│   ├── sse/                 # SSE 解析工具
-│   ├── stream/              # 统一流式消费引擎
-│   ├── testsuite/           # 测试集框架与场景编排
-│   ├── translatorcliproxy/  # CLIProxy 桥接与流式写入
-│   ├── util/                # 通用工具
-│   ├── version/             # 版本解析与比较
-│   └── webui/               # WebUI 静态托管
-├── webui/                   # React WebUI 源码
-│   └── src/
-│       ├── app/             # 路由、鉴权、配置状态
-│       ├── features/        # 业务功能模块
-│       ├── components/      # 通用组件
-│       └── locales/         # 语言包
-├── scripts/                 # 构建与测试脚本
-├── tests/
-│   ├── compat/              # 兼容夹具与期望输出
-│   ├── node/                # Node 侧单元测试
-│   └── scripts/             # 测试脚本入口（unit/e2e）
-├── plans/                   # 计划、门禁和手工烟测记录
-├── static/admin/            # WebUI 构建产物（不提交）
-├── Dockerfile               # 多阶段构建
-├── docker-compose.yml       # 生产环境
-├── docker-compose.dev.yml   # 开发环境
-└── vercel.json              # Vercel 配置
-```
+为避免与其他文档重复维护，目录结构与模块职责已迁移到：
+
+- [docs/ARCHITECTURE.md](./ARCHITECTURE.md)
+- [docs/README.md](./README.md)
+
+贡献前建议先阅读架构文档中的“请求主链路”和 `internal/` 模块职责，再定位改动范围。
 
 ## 问题反馈
 
