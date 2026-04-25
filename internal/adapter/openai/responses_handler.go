@@ -85,6 +85,11 @@ func (h *Handler) Responses(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	stdReq, err = h.applyHistorySplit(r.Context(), a, stdReq)
+	if err != nil {
+		writeOpenAIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 
 	sessionID, err := h.DS.CreateSession(r.Context(), a, 3)
 	if err != nil {
@@ -112,10 +117,10 @@ func (h *Handler) Responses(w http.ResponseWriter, r *http.Request) {
 		h.handleResponsesStream(w, r, resp, owner, responseID, stdReq.ResponseModel, stdReq.FinalPrompt, stdReq.Thinking, stdReq.Search, stdReq.ToolNames, stdReq.ToolChoice, traceID)
 		return
 	}
-	h.handleResponsesNonStream(w, resp, owner, responseID, stdReq.ResponseModel, stdReq.FinalPrompt, stdReq.Thinking, stdReq.ToolNames, stdReq.ToolChoice, traceID)
+	h.handleResponsesNonStream(w, resp, owner, responseID, stdReq.ResponseModel, stdReq.FinalPrompt, stdReq.Thinking, stdReq.Search, stdReq.ToolNames, stdReq.ToolChoice, traceID)
 }
 
-func (h *Handler) handleResponsesNonStream(w http.ResponseWriter, resp *http.Response, owner, responseID, model, finalPrompt string, thinkingEnabled bool, toolNames []string, toolChoice util.ToolChoicePolicy, traceID string) {
+func (h *Handler) handleResponsesNonStream(w http.ResponseWriter, resp *http.Response, owner, responseID, model, finalPrompt string, thinkingEnabled, searchEnabled bool, toolNames []string, toolChoice util.ToolChoicePolicy, traceID string) {
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -126,6 +131,9 @@ func (h *Handler) handleResponsesNonStream(w http.ResponseWriter, resp *http.Res
 	stripReferenceMarkers := h.compatStripReferenceMarkers()
 	sanitizedThinking := cleanVisibleOutput(result.Thinking, stripReferenceMarkers)
 	sanitizedText := cleanVisibleOutput(result.Text, stripReferenceMarkers)
+	if searchEnabled {
+		sanitizedText = replaceCitationMarkersWithLinks(sanitizedText, result.CitationLinks)
+	}
 	if writeUpstreamEmptyOutputError(w, sanitizedText, result.ContentFilter) {
 		return
 	}
