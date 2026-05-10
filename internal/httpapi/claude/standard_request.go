@@ -32,11 +32,11 @@ func normalizeClaudeRequest(store ConfigReader, req map[string]any) (claudeNorma
 
 	dsPayload := convertClaudeToDeepSeek(payload, store)
 	dsModel, _ := dsPayload["model"].(string)
-	_, searchEnabled, ok := config.GetModelConfig(dsModel)
+	defaultThinkingEnabled, searchEnabled, ok := config.GetModelConfig(dsModel)
 	if !ok {
 		searchEnabled = false
 	}
-	thinkingEnabled := util.ResolveThinkingEnabled(req, false)
+	thinkingEnabled := util.ResolveThinkingEnabled(req, defaultThinkingEnabled)
 	if config.IsNoThinkingModel(dsModel) {
 		thinkingEnabled = false
 	}
@@ -52,7 +52,7 @@ func normalizeClaudeRequest(store ConfigReader, req map[string]any) (claudeNorma
 			RequestedModel:  strings.TrimSpace(model),
 			ResolvedModel:   dsModel,
 			ResponseModel:   strings.TrimSpace(model),
-			Messages:        payload["messages"].([]any),
+			Messages:        normalizedMessages,
 			PromptTokenText: finalPrompt,
 			ToolsRaw:        toolsRequested,
 			FinalPrompt:     finalPrompt,
